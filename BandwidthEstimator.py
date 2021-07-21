@@ -15,6 +15,9 @@ MIN_BANDWIDTH_MBPS = 0.01
 LOG_MAX_BANDWIDTH_MBPS = np.log(MAX_BANDWIDTH_MBPS)
 LOG_MIN_BANDWIDTH_MBPS = np.log(MIN_BANDWIDTH_MBPS)
 
+LOG_FILE = 'webrtc.log'
+STATIC_BWE = 20 * UNIT_M
+
 
 def liner_to_log(value):
     # from 10kbps~8Mbps to 0~1
@@ -28,6 +31,12 @@ def log_to_linear(value):
     value = np.clip(value, 0, 1)
     log_bwe = value * (LOG_MAX_BANDWIDTH_MBPS - LOG_MIN_BANDWIDTH_MBPS) + LOG_MIN_BANDWIDTH_MBPS
     return np.exp(log_bwe) * UNIT_M
+
+
+def append_log(s):
+    with open(LOG_FILE, 'a') as f:
+        f.write(s)
+        f.write('\n')
 
 
 class Estimator(object):
@@ -49,13 +58,17 @@ class Estimator(object):
         self.packet_record.reset()
         self.history = deque(maxlen=buffer_size)
         self.step_time = step_time
-        # init
-        states = [0.0, 0.0, 0.0, 0.0]
-        torch_tensor_states = torch.FloatTensor(torch.Tensor(states).reshape(1, -1)).to(self.device)
-        action, _, _ = self.model.forward(torch_tensor_states)
-#         self.bandwidth_prediction = log_to_linear(action)
-        self.bandwidth_prediction = action * UNIT_M
+#         # init
+#         states = [0.0, 0.0, 0.0, 0.0]
+#         torch_tensor_states = torch.FloatTensor(torch.Tensor(states).reshape(1, -1)).to(self.device)
+#         action, _, _ = self.model.forward(torch_tensor_states)
+# #         self.bandwidth_prediction = log_to_linear(action)
+        action = STATIC_BWE  # DEBUG
+
+        self.bandwidth_prediction = action
+        append_log(f'M INIT BWE: {self.bandwidth_prediction} bps')
         self.last_call = "init"
+        
 
     def report_states(self, stats: dict):
         '''
@@ -83,45 +96,35 @@ class Estimator(object):
         packet_info.header_length = stats["header_length"]
         packet_info.payload_size = stats["payload_size"]
         packet_info.bandwidth_prediction = self.bandwidth_prediction
-
         self.packet_record.on_receive(packet_info)
         
 
     def get_estimated_bandwidth(self)->int:
         if self.last_call and self.last_call == "report_states":
             self.last_call = "get_estimated_bandwidth"
-            
-#             # calculate state
-#             states = []
-#             receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time)
-#             states.append(liner_to_log(receiving_rate))
-#             delay = self.packet_record.calculate_average_delay(interval=self.step_time)
-#             states.append(min(delay/1000, 1))
-#             loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time)
-#             states.append(loss_ratio)
-#             latest_prediction = self.packet_record.calculate_latest_prediction()
-#             states.append(liner_to_log(latest_prediction))
 
             # DEBUG  # from rtc_env.py -> GymEnv -> step
             states = []
-            receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time)  # bps
-            states.append(receiving_rate/UNIT_M)  # mbps
-            delay = self.packet_record.calculate_average_delay(interval=self.step_time)  # ms
-            states.append(max(min(delay/UNIT_K, 1), 0))  # enforce 0 <= delay <= 1s
+            receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time) / UNIT_M  # mbps
+            states.append(receiving_rate)
+            delay = self.packet_record.calculate_average_delay(interval=self.step_time) / UNIT_K  # s
+            states.append(max(min(delay, 1), 0))  # enforce 0 <= delay <= 1s
             loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time)
             states.append(loss_ratio)
-            latest_prediction = self.packet_record.calculate_latest_prediction()
-            states.append(latest_prediction - receiving_rate/UNIT_M)  # over_estimation
+            latest_prediction = self.packet_record.calculate_latest_prediction() / UNIT_M  # mbps
+            states.append(latest_prediction - receiving_rate)  # over_estimation
+            
+            append_log(f'M STATE: [{states[0]:.3f}, {states[1]:.3f}, {states[2]:.3f}, {states[3]:.3f}]')
             torch_tensor_states = torch.FloatTensor(torch.Tensor(states).reshape(1, -1)).to(self.device)
             
 #             # from ppo_agent.py -> PPO -> select_action
 #             action, _, _ = self.model.forward(torch_tensor_states)
 # #             self.bandwidth_prediction = log_to_linear(action)
-            
-            action = 5.
+            action = STATIC_BWE  # DEBUG
 
             # from rtc_env.py -> GymEnv -> step
-            self.bandwidth_prediction = action * UNIT_M
+            self.bandwidth_prediction = action
+            append_log(f'M BWE: {self.bandwidth_prediction} bps')
         
 
         return self.bandwidth_prediction
