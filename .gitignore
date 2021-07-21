@@ -1,3 +1,12 @@
+# onlchallenge project files
+*.zip
+receiver_pyinfer.json
+sender_pyinfer.json
+testmedia/
+webrtc.log
+outaudio.wav
+outvideo.yuv
+
 # vscode
 .vscode/*
 

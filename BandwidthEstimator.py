@@ -91,16 +91,16 @@ class Estimator(object):
         if self.last_call and self.last_call == "report_states":
             self.last_call = "get_estimated_bandwidth"
             
-            # calculate state
-            states = []
-            receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time)
-            states.append(liner_to_log(receiving_rate))
-            delay = self.packet_record.calculate_average_delay(interval=self.step_time)
-            states.append(min(delay/1000, 1))
-            loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time)
-            states.append(loss_ratio)
-            latest_prediction = self.packet_record.calculate_latest_prediction()
-            states.append(liner_to_log(latest_prediction))
+#             # calculate state
+#             states = []
+#             receiving_rate = self.packet_record.calculate_receiving_rate(interval=self.step_time)
+#             states.append(liner_to_log(receiving_rate))
+#             delay = self.packet_record.calculate_average_delay(interval=self.step_time)
+#             states.append(min(delay/1000, 1))
+#             loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time)
+#             states.append(loss_ratio)
+#             latest_prediction = self.packet_record.calculate_latest_prediction()
+#             states.append(liner_to_log(latest_prediction))
 
             # DEBUG  # from rtc_env.py -> GymEnv -> step
             states = []
@@ -114,9 +114,11 @@ class Estimator(object):
             states.append(latest_prediction - receiving_rate/UNIT_M)  # over_estimation
             torch_tensor_states = torch.FloatTensor(torch.Tensor(states).reshape(1, -1)).to(self.device)
             
-            # from ppo_agent.py -> PPO -> select_action
-            action, _, _ = self.model.forward(torch_tensor_states)
-#             self.bandwidth_prediction = log_to_linear(action)
+#             # from ppo_agent.py -> PPO -> select_action
+#             action, _, _ = self.model.forward(torch_tensor_states)
+# #             self.bandwidth_prediction = log_to_linear(action)
+            
+            action = 5.
 
             # from rtc_env.py -> GymEnv -> step
             self.bandwidth_prediction = action * UNIT_M
