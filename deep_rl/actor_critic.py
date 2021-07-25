@@ -28,45 +28,34 @@ class ActorCritic(nn.Module):
                 nn.Linear(32, 1),
                 )
         self.device = device
-        self.MAX_ACTION = 20  # DEBUG 限定最大估计 mbps
+        self.MIN_ACTION, self.MAX_ACTION = 0, 1  # action: 01norm
         self.action_var = torch.full((action_dim,), exploration_param**2).to(self.device)  # 在均值附近随机探索。exploration_param即随机探索的标准差。
-        self.random_action = True
+        self.random_action = True  # True when training, False when evaluating
 
     def forward(self, state):
         value = self.critic(state)
         action_mean = self.actor(state)
-        
-        # DEBUG action是receiving rate的增量，且限定最大估计
-#         if state.size(0) == 1000:
-#             print(state[:, 0].shape, action_mean.shape)
-#             raise
-#         action_mean = torch.clamp(state[:, 0].detach() + action_mean, 0, self.MAX_ACTION)
-        action_mean = torch.clamp(state.flatten()[0].detach() + action_mean, 0, self.MAX_ACTION)
-        
         cov_mat = torch.diag(self.action_var).to(self.device)
         dist = MultivariateNormal(action_mean, cov_mat)
 
         if not self.random_action:
-            action = action_mean
+            action = action_mean  # exploitation
         else:
-            action = dist.sample()  # 随机探索
+            action = dist.sample()  # exploration
 
         action_logprobs = dist.log_prob(action)
-
-        return action.detach(), action_logprobs, value
+        
+        action = torch.clamp(action, self.MIN_ACTION, self.MAX_ACTION)
+        return action.detach(), action_logprobs, value  # action可以超出env的bwe范围
 
     def evaluate(self, state, action):
+        value = self.critic(state)
         action_mean = self.actor(state)
-        
-        # DEBUG
-        action_mean = torch.clamp(state.flatten()[0].detach() + action_mean, 0, self.MAX_ACTION)
-        
         cov_mat = torch.diag(self.action_var).to(self.device)
         dist = MultivariateNormal(action_mean, cov_mat)
 
         action_logprobs = dist.log_prob(action)
         dist_entropy = dist.entropy()
-        value = self.critic(state)
 
         return action_logprobs, torch.squeeze(value), dist_entropy
 
