@@ -46,7 +46,7 @@ class Estimator(object):
         self.packet_record.reset()
         self.step_time = step_time
         
-        model_path = "cacb.pkl"
+        model_path = "./model/cacb.pkl"
         state = np.array([0.0, 0.0, 0.0, 0.0])
         with open(model_path, 'rb') as f:
             self.cacb = pickle.load(f)

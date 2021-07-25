@@ -1,3 +1,12 @@
+# pip hack
+import subprocess
+import sys
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+install('sklearn')
+install('pandas')
+    
+
 import os
 import numpy as np
 from typing import Dict, Optional, Tuple, List, Union
