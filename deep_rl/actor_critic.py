@@ -12,23 +12,22 @@ class ActorCritic(nn.Module):
         super(ActorCritic, self).__init__()
         # output of actor in (0, 1) range
         self.actor =  nn.Sequential(
-                nn.Linear(state_dim, 64),
+                nn.Linear(state_dim, 32),
                 nn.ReLU(),
-                nn.Linear(64, 32),
+                nn.Linear(32, 16),
                 nn.ReLU(),
-                nn.Linear(32, action_dim),
-#                 nn.Sigmoid()  # DEBUG 不需要sigmoid
+                nn.Linear(16, action_dim),
+                nn.Sigmoid()  # 01norm
                 )
         # critic V(s)
         self.critic = nn.Sequential(
-                nn.Linear(state_dim, 64),
+                nn.Linear(state_dim, 32),
                 nn.ReLU(),
-                nn.Linear(64,32),
+                nn.Linear(32, 16),
                 nn.ReLU(),
-                nn.Linear(32, 1),
+                nn.Linear(16, 1),
                 )
         self.device = device
-        self.MIN_ACTION, self.MAX_ACTION = 0, 1  # action: 01norm
         self.action_var = torch.full((action_dim,), exploration_param**2).to(self.device)  # 在均值附近随机探索。exploration_param即随机探索的标准差。
         self.random_action = True  # True when training, False when evaluating
 
@@ -38,14 +37,14 @@ class ActorCritic(nn.Module):
         cov_mat = torch.diag(self.action_var).to(self.device)
         dist = MultivariateNormal(action_mean, cov_mat)
 
-        if not self.random_action:
-            action = action_mean  # exploitation
-        else:
+        if self.random_action:
             action = dist.sample()  # exploration
+            action = action_mean + (action_mean-action).abs()  # DEBUG 只往上探索
+        else:
+            action = action_mean  # exploitation
 
         action_logprobs = dist.log_prob(action)
         
-        action = torch.clamp(action, self.MIN_ACTION, self.MAX_ACTION)
         return action.detach(), action_logprobs, value  # action可以超出env的bwe范围
 
     def evaluate(self, state, action):
