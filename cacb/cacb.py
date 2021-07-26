@@ -4,8 +4,7 @@ import sys
 def install(package):
     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 install('sklearn')
-install('pandas')
-    
+
 
 import os
 import numpy as np
@@ -13,8 +12,8 @@ from typing import Dict, Optional, Tuple, List, Union
 from io import StringIO
 from collections import deque
 
-import pandas as pd
 from sklearn.linear_model import LinearRegression
+from sklearn.neural_network import MLPRegressor
 from sklearn.base import RegressorMixin
 
 
@@ -97,6 +96,7 @@ class ContinuousActionContextualBanditModel:
         been logged.
 
     data_file : str
+        DELETED TO DETACH FROM PANDAS
         Path to the file where the logged data is stored. If no file is provided, the data exceeding
         the memory limit will be forgotten. The provided file can be empty or it can contain
         existing logged data (for warm start) in the following csv format:
@@ -128,7 +128,6 @@ class ContinuousActionContextualBanditModel:
         action_width: Action,
         memory: int = None,
         initial_action: Action = None,
-        data_file: str = None,
         regression_model: RegressorMixin = None,
         categorize_actions: bool = False,
         decay_rate: float = 1.0,
@@ -138,31 +137,15 @@ class ContinuousActionContextualBanditModel:
         self.action_width = action_width
         self.memory = memory
         self.initial_action = initial_action
-        self.data_file = data_file
         self.regression_model = regression_model
         
         self.categorize_actions = categorize_actions
         self.decay_rate = decay_rate
-        self.logged_data = (
-            self._read_logged_data_file(data_file, memory)
-            if data_file
-            else np.array([])
-        )
+        self.logged_data = np.array([])
         self.reg = None
-
-    def _read_logged_data_file(
-        self, data_file: str, memory: Optional[int]
-    ) -> np.ndarray:
-        if not os.path.exists(data_file):
-            open(data_file, "w").close()
-            return np.array([])
-        if os.path.getsize(data_file) == 0:
-            return np.array([])
-        if memory is None:
-            return pd.read_csv(data_file, header=None).values  # type: ignore
-        with open(data_file, "r") as f:
-            q = deque(f, memory)
-        return pd.read_csv(StringIO("".join(q)), header=None).values  # type: ignore
+        
+    def clear_memory(self):
+        self.logged_data = np.array([])
 
     def _get_actions(self) -> List[Action]:
         num_actions = int((self.max_value - self.min_value) / self.action_width + 1)
@@ -194,10 +177,6 @@ class ContinuousActionContextualBanditModel:
             a = self._get_actions_one_hot(action)
         x = np.append(a, context)
         example = np.append([prob, cost], x)
-        if self.data_file:
-            with open(self.data_file, "a") as f:
-                new_row = ",".join(np.char.mod("%f", example))
-                f.write("\n" + new_row)
         if data.shape[0] == 0:
             self.logged_data = np.hstack([data, example]).reshape(1, -1)
         else:
@@ -400,23 +379,7 @@ class ContinuousActionContextualBanditModel:
         weights = ips * (np.linspace(0, 1, len(ips) + 1) ** self.decay_rate)[1:]
         costs = data[:, 1]
         x = data[:, 2:]
-        self.reg.fit(x, costs, sample_weight=weights)
-
-    def get_logged_data_df(self) -> pd.DataFrame:
-        """
-        Get the logged training data as a Pandas DataFrame.
-
-        Returns
-        ----------
-        logged_data : pandas.DataFrame
-        """
-        data = self.logged_data
-        cols = ["prob", "cost"]
-        if self.categorize_actions:
-            for action in self._get_actions():
-                cols.append(f"action__{action}")
+        if isinstance(self.reg, MLPRegressor):
+            self.reg.fit(x, costs)
         else:
-            cols.append("action")
-        for i in range(data.shape[1] - len(cols)):
-            cols.append(f"context__{i}")
-        return pd.DataFrame(self.logged_data, columns=cols)
+            self.reg.fit(x, costs, sample_weight=weights)

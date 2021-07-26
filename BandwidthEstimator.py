@@ -10,6 +10,13 @@ from utils.packet_record import PacketRecord
 from deep_rl.actor_critic import ActorCritic
 from collections import deque
 
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.utils._testing import ignore_warnings
+from sklearn.exceptions import ConvergenceWarning
+
+import argparse
+
 
 UNIT_K = 1000
 UNIT_M = 1000000
@@ -17,6 +24,39 @@ MAX_BANDWIDTH_MBPS = 8
 MIN_BANDWIDTH_MBPS = 0.01
 LOG_MAX_BANDWIDTH_MBPS = np.log(MAX_BANDWIDTH_MBPS)
 LOG_MIN_BANDWIDTH_MBPS = np.log(MIN_BANDWIDTH_MBPS)
+
+
+def get_args():
+    parser = argparse.ArgumentParser(description='onlc')
+    parser.add_argument('--verbose', default=False, action='store_true', help='verbose printing')
+    parser.add_argument('--device', default='cpu', type=str, help='cpu|cuda:0|...')
+    parser.add_argument('--trace_filter', default=None, type=str, help='filter trace name (4G_500kbps|WIRED|mbps|...)')
+    
+    parser.add_argument('--eval_random', default=False, type=bool, help='random action during evaluation')
+    parser.add_argument('--eval_model', default=None, type=str, help='name of evaluated model')
+    parser.add_argument('--eval_exp_std', default=0, type=float, help="explorational standard deviation during evaluation")
+    parser.add_argument('--max_eval_epi_steps', default=1000, type=int, help='')
+    
+    parser.add_argument('--finetune', default=False, action='store_true', help='load model and finetune (if false, pretrain and save model)')
+    parser.add_argument('--model_path', default='./model/cacb.pkl', type=str, help='path to save/load model')
+    
+    # arguments for automl tuning
+    parser.add_argument('--recv_rate_w', default=1, type=float, help='state weight')
+    parser.add_argument('--delay_w', default=1, type=float, help='state weight')
+    parser.add_argument('--loss_ratio_w', default=1, type=float, help='state weight')
+    parser.add_argument('--over_est_w', default=1, type=float, help='state weight')
+    
+    parser.add_argument('--max_train_epi_steps', default=200, type=int, help='')
+    parser.add_argument('--episodes', default=1000, type=int, help='')
+    parser.add_argument('--memory', default=1000, type=int, help='cacb memory size')
+    parser.add_argument('--memory_gamma', default=0.8, type=float, help='cacb memory states decay')
+    parser.add_argument('--eps_gamma', default=1, type=float, help='epsilon-greedy decay speed')
+    parser.add_argument('--exp_width', default=10, type=int, help='cacb exploration width (num of action_width)')
+    
+    args = parser.parse_args([
+    ])
+    return args
+
 
 
 def liner_to_log(value):
@@ -41,17 +81,31 @@ def append_log(s):
 
 
 class Estimator(object):
-    def __init__(self, step_time=200):  # from rtc_env.py -> GymEnv -> init
+    def __init__(self, step_time=200):
+        # from rtc_env.py -> GymEnv -> init
         self.packet_record = PacketRecord()
         self.packet_record.reset()
         self.step_time = step_time
         
-        model_path = "./model/cacb.pkl"
-        state = np.array([0.0, 0.0, 0.0, 0.0])
-        with open(model_path, 'rb') as f:
-            self.cacb = pickle.load(f)
-        action, _ = self.cacb.predict(state, epsilon=0, exploration_width=0, exploration_strategy=None)
+        # from main.py
+        self.args = args = get_args()
+        reg = GradientBoostingRegressor()
+        self.cacb = ContinuousActionContextualBanditModel(
+            min_value=0,
+            max_value=1,
+            action_width=0.01,
+            initial_action=0.5,
+            regression_model=reg,
+            memory=args.memory,
+            decay_rate=args.memory_gamma,
+        )
+        self.dummy_context = np.array([1])
+        self.time_step = 0
+        
+        epsilon = max(1 / (self.time_step * args.eps_gamma + 1), 0.1)
+        action, prob = self.cacb.predict(self.dummy_context, epsilon, args.exp_width)
         self.bandwidth_prediction = round(log_to_linear(action))
+        self.prob = prob
         
 #         state_dim = 4
 #         action_dim = 1
@@ -75,6 +129,7 @@ class Estimator(object):
         self.last_call = "init"
         
 
+    @ignore_warnings(category=ConvergenceWarning)
     def report_states(self, stats: dict):
         '''
         stats is a dict with the following items
@@ -105,10 +160,10 @@ class Estimator(object):
         
 
     def get_estimated_bandwidth(self)->int:
-        from sklearn.ensemble import GradientBoostingRegressor
-        
         if self.last_call and self.last_call == "report_states":
             self.last_call = "get_estimated_bandwidth"
+            
+            args = self.args
             
             # from rtc_env.py -> GymEnv -> step
             state = []
@@ -119,8 +174,15 @@ class Estimator(object):
             loss_ratio = self.packet_record.calculate_loss_ratio(interval=self.step_time)  # ratio
             state.append(loss_ratio)
             latest_prediction = self.packet_record.calculate_latest_prediction()  # bps
-            state.append(liner_to_log(receiving_rate) - liner_to_log(latest_prediction))  # 01norm over_estimation
+            state.append(liner_to_log(latest_prediction) - liner_to_log(receiving_rate))  # 01norm over_estimation.
+            
             append_log(f'MY STATE: [{receiving_rate/UNIT_M:.6f} mbps, {state[1]:.3f} s, {state[2]:.3f}, {state[3]:.3f}]')
+            
+            reward = args.recv_rate_w * state[0] - args.delay_w * state[1] - args.loss_ratio_w * state[2] - args.over_est_w * np.abs(state[3])
+            
+            # from main.py
+            loss = -reward
+            self.cacb.learn(self.dummy_context, liner_to_log(self.bandwidth_prediction), loss, self.prob)
             
             # from main.py
 #             state = torch.FloatTensor(state).reshape(1, -1).to(self.device)
@@ -129,8 +191,13 @@ class Estimator(object):
 #             action, _, _ = self.model.forward(state)
 #             self.bandwidth_prediction = round(log_to_linear(action.item()))
 
-            action, _ = self.cacb.predict(state, epsilon=0, exploration_width=0, exploration_strategy=None)
+            # from main.py
+            self.time_step += 1
+            epsilon = max(1 / (self.time_step * args.eps_gamma + 1), 0.1)
+            action, prob = self.cacb.predict(self.dummy_context, epsilon, args.exp_width)
+            
             self.bandwidth_prediction = round(log_to_linear(action))
+            self.prob = prob
         
             append_log(f'MY BWE: {self.bandwidth_prediction/UNIT_M:.6f} mbps')
         

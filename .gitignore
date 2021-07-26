@@ -3,7 +3,7 @@
 receiver_pyinfer.json
 sender_pyinfer.json
 testmedia/
-webrtc.log
+*.log
 outaudio.wav
 outvideo.yuv
 
