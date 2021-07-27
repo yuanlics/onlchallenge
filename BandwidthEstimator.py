@@ -7,7 +7,7 @@ import torch
 import numpy as np
 from utils.packet_info import PacketInfo
 from utils.packet_record import PacketRecord
-from deep_rl.actor_critic import ActorCritic
+# from deep_rl.actor_critic import ActorCritic
 from collections import deque
 
 from sklearn.ensemble import GradientBoostingRegressor
