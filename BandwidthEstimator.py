@@ -15,6 +15,8 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.utils._testing import ignore_warnings
 from sklearn.exceptions import ConvergenceWarning
 
+from scipy import optimize
+
 import argparse
 
 
@@ -87,6 +89,7 @@ class Estimator(object):
         self.packet_record.reset()
         self.step_time = step_time
         
+        ## cacb_air
         # from main.py
         self.args = args = get_args()
         reg = GradientBoostingRegressor()
@@ -106,24 +109,8 @@ class Estimator(object):
         action, prob = self.cacb.predict(self.dummy_context, epsilon, args.exp_width)
         self.bandwidth_prediction = round(log_to_linear(action))
         self.prob = prob
-        
-#         state_dim = 4
-#         action_dim = 1
-#         exploration_param = 0.05
-#         model_path = "./model/ppo_2021_07_25_04_32_42.pth"
-        
-# #         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-#         self.device = torch.device("cpu")
-#         self.model = ActorCritic(state_dim, action_dim, exploration_param, self.device).to(self.device)
-#         self.model.load_state_dict(torch.load(model_path))
-#         self.model.random_action = False
 
-# #         self.history = deque(maxlen=buffer_size)
-
-#         states = [0.0, 0.0, 0.0, 0.0]
-#         torch_tensor_states = torch.FloatTensor(torch.Tensor(states).reshape(1, -1)).to(self.device)
-#         action, _, _ = self.model.forward(torch_tensor_states)
-#         self.bandwidth_prediction = round(log_to_linear(action.item()))
+        ## fmin
         
         append_log(f'MY INIT BWE: {self.bandwidth_prediction/UNIT_M:.6f} mbps')
         self.last_call = "init"
@@ -158,7 +145,7 @@ class Estimator(object):
         packet_info.bandwidth_prediction = self.bandwidth_prediction
         self.packet_record.on_receive(packet_info)
         
-
+        
     def get_estimated_bandwidth(self)->int:
         if self.last_call and self.last_call == "report_states":
             self.last_call = "get_estimated_bandwidth"
@@ -180,24 +167,29 @@ class Estimator(object):
             
             reward = args.recv_rate_w * state[0] - args.delay_w * state[1] - args.loss_ratio_w * state[2] - args.over_est_w * np.abs(state[3])
             
+#             ## PPO
+#             # from main.py
+#             state = torch.FloatTensor(state).reshape(1, -1).to(self.device)
+            
+#             # from ppo_agent.py -> PPO -> select_action
+#             action, _, _ = self.model.forward(state)
+#             self.bandwidth_prediction = round(log_to_linear(action.item()))
+            
+            ## cacb_air
             # from main.py
             loss = -reward
             self.cacb.learn(self.dummy_context, liner_to_log(self.bandwidth_prediction), loss, self.prob)
-            
-            # from main.py
-#             state = torch.FloatTensor(state).reshape(1, -1).to(self.device)
-            
-            # from ppo_agent.py -> PPO -> select_action
-#             action, _, _ = self.model.forward(state)
-#             self.bandwidth_prediction = round(log_to_linear(action.item()))
 
-            # from main.py
             self.time_step += 1
             epsilon = max(1 / (self.time_step * args.eps_gamma + 1), 0.1)
             action, prob = self.cacb.predict(self.dummy_context, epsilon, args.exp_width)
             
             self.bandwidth_prediction = round(log_to_linear(action))
             self.prob = prob
+
+
+            ## fmin
+#             minimum = optimize.fmin(loss_func, x0=np.array([0.3]), xtol=1e-2, ftol=1e-2, maxiter=50, maxfun=50)
         
             append_log(f'MY BWE: {self.bandwidth_prediction/UNIT_M:.6f} mbps')
         
